@@ -459,6 +459,10 @@ func (h *MarketHandler) WithdrawPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	orderIDInt, err := strconv.Atoi(reqBody.OrderID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	if !(luhn.Valid(orderIDInt)) {
 		http.Error(w, market.ErrOrderIDIsInvalid.Error(), http.StatusUnprocessableEntity)
 		return

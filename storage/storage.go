@@ -219,7 +219,7 @@ func (db *DatabaseInstance) RecountBalanceForLogin(login string) error {
 	if err != nil {
 		return err
 	}
-	err = db.conn.QueryRow(ctx, "SELECT sum(sum) FROM market.withdrawals where login = $1);",
+	err = db.conn.QueryRow(ctx, "SELECT sum(sum) FROM market.withdrawals where login = $1;",
 		login).Scan(&withdrawSum)
 	if err != nil {
 		return err
