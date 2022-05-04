@@ -96,6 +96,7 @@ func (s *MarketService) UploadOrderInfo(orderID string, status string, accrual f
 }
 
 func (s *MarketService) GetActualizedOrderInfo(url string, orderID string, login string) {
+	log.Println("[GetActualizedOrderInfo] ", url+"/api/orders/"+orderID)
 	resp, err := http.Get(url + "/api/orders/" + orderID)
 	if err != nil {
 		fmt.Println(err)
@@ -107,6 +108,7 @@ func (s *MarketService) GetActualizedOrderInfo(url string, orderID string, login
 		log.Println("[GetActualizedOrderInfo] " + err.Error())
 		return
 	}
+	log.Println("[GetActualizedOrderInfo] ", string(body))
 	responseBody := ResponseBodyOrder{}
 	err = json.Unmarshal(body, &responseBody)
 	if err != nil {
@@ -133,5 +135,15 @@ func (s *MarketService) GetUserOrders(login string) ([]storage.OrderInfo, error)
 	if err != nil {
 		return nil, err
 	}
+	return result, nil
+}
+
+func (s *MarketService) GetUserBalance(login string) (storage.BalanceInfo, error) {
+
+	result, err := s.Storage.GetBalanceByLogin(login)
+	if err != nil {
+		return result, err
+	}
+
 	return result, nil
 }

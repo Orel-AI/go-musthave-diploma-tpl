@@ -20,6 +20,7 @@ type Storage interface {
 	GetLoginByOrderID(orderID string) (string, error)
 	RecountBalanceForLogin(login string) error
 	GetAllOrdersOfUser(login string) ([]OrderInfo, error)
+	GetBalanceByLogin(login string) (BalanceInfo, error)
 }
 
 type DatabaseInstance struct {
@@ -29,10 +30,15 @@ type DatabaseInstance struct {
 }
 
 type OrderInfo struct {
-	Number     string
-	Status     string
-	Accrual    float32
-	UploadedAt string
+	Number     string  `json:"number"`
+	Status     string  `json:"status"`
+	Accrual    float32 `json:"accrual"`
+	UploadedAt string  `json:"uploaded_at"`
+}
+
+type BalanceInfo struct {
+	Current   float32 `json:"current"`
+	Withdrawn float32 `json:"withdrawn"`
 }
 
 var (
@@ -245,5 +251,23 @@ func (db *DatabaseInstance) GetAllOrdersOfUser(login string) ([]OrderInfo, error
 		i++
 	}
 	return results, nil
+}
+
+func (db *DatabaseInstance) GetBalanceByLogin(login string) (BalanceInfo, error) {
+	ctx := context.Background()
+	var result BalanceInfo
+	rows, err := db.conn.Query(ctx, "SELECT balance, withdrawn "+
+		"FROM market.balance WHERE login = $1", login)
+	if err != nil {
+		return result, err
+	}
+
+	for rows.Next() {
+		err := rows.Scan(&result.Current, &result.Withdrawn)
+		if err != nil {
+			return result, err
+		}
+	}
+	return result, nil
 
 }

@@ -162,6 +162,7 @@ func (h *MarketHandler) RegisterPOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Println("[RegisterPOST] - handler started")
 	body, err := io.ReadAll(r.Body)
 	defer r.Body.Close()
 	if err != nil {
@@ -180,7 +181,7 @@ func (h *MarketHandler) RegisterPOST(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-
+	log.Println("[RegisterPOST] - request Unmarshaled login:", reqBody.Login, "pass:", reqBody.Password)
 	if reqBody.Login == "" || reqBody.Password == "" {
 		http.Error(w, "login or password is empty", http.StatusBadRequest)
 		return
@@ -189,20 +190,24 @@ func (h *MarketHandler) RegisterPOST(w http.ResponseWriter, r *http.Request) {
 	err = h.Market.Register(reqBody.Login, reqBody.Password, userIDStr, ctx)
 	if errors.Is(err, storage.ErrLoginIsTaken) {
 		http.Error(w, "login is taken", http.StatusConflict)
+		log.Println("[RegisterPOST] - status", w.Header().Get("Status"))
 		return
 	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Println("[RegisterPOST] - status", w.Header().Get("Status"))
 		return
 	}
 
 	err = h.Market.Authenticate(reqBody.Login, userIDStr, ctx)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Println("[RegisterPOST] - status", w.Header().Get("Status"))
 		return
 	}
 
 	w.WriteHeader(http.StatusOK)
+	log.Println("[RegisterPOST] - status end", w.Header().Get("Status"))
 }
 
 func (h *MarketHandler) LoginPOST(w http.ResponseWriter, r *http.Request) {
@@ -342,6 +347,49 @@ func (h *MarketHandler) OrdersGET(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+	resJSON, err := json.Marshal(result)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, err = w.Write([]byte(resJSON))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+}
+
+func (h *MarketHandler) BalanceGET(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	userIDStr, ok := MakeUserID(ctx)
+	if !ok {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	login, err := h.Market.CheckAuth(userIDStr, ctx)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if login == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	result, err := h.Market.GetUserBalance(login)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if (storage.BalanceInfo{}) == result {
+		result.Withdrawn = 0
+		result.Current = 0
+	}
+
 	resJSON, err := json.Marshal(result)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
