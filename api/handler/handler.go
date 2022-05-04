@@ -17,6 +17,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -378,6 +379,10 @@ func (h *MarketHandler) OrdersGET(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+	sort.Slice(result[:], func(i, j int) bool {
+		return result[i].UploadedAt < result[j].UploadedAt
+	})
+
 	resJSON, err := json.Marshal(result)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -428,7 +433,7 @@ func (h *MarketHandler) BalanceGET(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *MarketHandler) WithdrawPost(w http.ResponseWriter, r *http.Request) {
+func (h *MarketHandler) WithdrawPOST(w http.ResponseWriter, r *http.Request) {
 	login, err := h.checkAuthCookie(w, r)
 	if login == "" && errors.Is(err, ErrNoAuth) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -478,5 +483,44 @@ func (h *MarketHandler) WithdrawPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
+
+}
+
+func (h *MarketHandler) WithdrawalsGET(w http.ResponseWriter, r *http.Request) {
+	login, err := h.checkAuthCookie(w, r)
+	if login == "" && errors.Is(err, ErrNoAuth) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	result, err := h.Market.GetUserWithdrawals(login)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if result == nil {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	sort.Slice(result[:], func(i, j int) bool {
+		return result[i].ProcessedAt < result[j].ProcessedAt
+	})
+
+	resJSON, err := json.Marshal(result)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, err = w.Write([]byte(resJSON))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 }

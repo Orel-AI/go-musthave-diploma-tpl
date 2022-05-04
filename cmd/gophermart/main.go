@@ -30,7 +30,8 @@ func main() {
 	r.Post("/api/user/orders", marketHandler.OrdersPOST)
 	r.Get("/api/user/orders", marketHandler.OrdersGET)
 	r.Get("/api/user/balance", marketHandler.BalanceGET)
-	r.Post("/api/user/balance/withdraw", marketHandler.WithdrawPost)
+	r.Post("/api/user/balance/withdraw", marketHandler.WithdrawPOST)
+	r.Get("/api/user/balance/withdrawals", marketHandler.WithdrawalsGET)
 
 	err = http.ListenAndServe(envs.AddressToServe, r)
 	if err != nil {

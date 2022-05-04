@@ -23,6 +23,7 @@ type Storage interface {
 	GetAllOrdersOfUser(login string) ([]OrderInfo, error)
 	GetBalanceByLogin(login string) (BalanceInfo, error)
 	AddWithdrawRecord(login string, orderID string, sum float32) error
+	GetAllWithdrawalsOfUser(login string) ([]WithdrawInfo, error)
 }
 
 type DatabaseInstance struct {
@@ -36,6 +37,12 @@ type OrderInfo struct {
 	Status     string  `json:"status"`
 	Accrual    float32 `json:"accrual"`
 	UploadedAt string  `json:"uploaded_at"`
+}
+
+type WithdrawInfo struct {
+	Order       string  `json:"order"`
+	Sum         float32 `json:"sum"`
+	ProcessedAt string  `json:"processed_at"`
 }
 
 type BalanceInfo struct {
@@ -298,4 +305,27 @@ func (db *DatabaseInstance) AddWithdrawRecord(login string, orderID string, sum 
 		return err
 	}
 	return nil
+}
+
+func (db *DatabaseInstance) GetAllWithdrawalsOfUser(login string) ([]WithdrawInfo, error) {
+	ctx := context.Background()
+	var results []WithdrawInfo
+	rows, err := db.conn.Query(ctx, "SELECT orderID, sum, processedDateTime "+
+		"FROM market.withdrawals WHERE login = $1", login)
+	if err != nil {
+		return nil, err
+	}
+
+	for rows.Next() {
+		var timeFromRow time.Time
+		var sum float32
+		var orderID string
+		err := rows.Scan(&orderID, &sum, &timeFromRow)
+		if err != nil {
+			continue
+		}
+		results = append(results, WithdrawInfo{Order: orderID, Sum: sum, ProcessedAt: timeFromRow.Format(time.RFC3339)})
+
+	}
+	return results, nil
 }

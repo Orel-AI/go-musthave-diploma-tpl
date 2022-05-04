@@ -171,3 +171,12 @@ func (s *MarketService) WithdrawBonuses(login string, orderID string, sum float3
 
 	return nil
 }
+
+func (s *MarketService) GetUserWithdrawals(login string) ([]storage.WithdrawInfo, error) {
+
+	result, err := s.Storage.GetAllWithdrawalsOfUser(login)
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
