@@ -8,13 +8,17 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4/pgxpool"
 	"log"
+	"time"
 )
 
 type Storage interface {
 	Register(login string, password string) error
-	InsertAuth(login string, userId string) error
+	InsertAuth(login string, userID string) error
 	CheckLogin(login string, password string) error
-	GetAuth(userId string) (login string, err error)
+	GetAuth(userID string) (login string, err error)
+	InsertOrder(orderID string, status string, accrual float32, login string) error
+	GetLoginByOrderID(orderID string) (string, error)
+	RecountBalanceForLogin(login string) error
 }
 
 type DatabaseInstance struct {
@@ -71,8 +75,35 @@ func (db *DatabaseInstance) initStorage() {
 		if err != nil {
 			log.Fatal(err)
 		}
+	}
+	err = db.conn.QueryRow(context.Background(), "SELECT COUNT(*) FROM market.authentication;").Scan(&cnt)
+	if err != nil {
 		_, err = db.conn.Exec(context.Background(), "CREATE TABLE market.authentication (login VARCHAR(256) PRIMARY KEY,"+
 			" cookie VARCHAR(256));")
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+	err = db.conn.QueryRow(context.Background(), "SELECT COUNT(*) FROM market.orders;").Scan(&cnt)
+	if err != nil {
+		_, err = db.conn.Exec(context.Background(), "CREATE TABLE market.orders (orderid VARCHAR(256) PRIMARY KEY,"+
+			" status VARCHAR(256), accrual decimal, login VARCHAR(256), uploadDateTime TIMESTAMP WITH TIME ZONE );")
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+	err = db.conn.QueryRow(context.Background(), "SELECT COUNT(*) FROM market.balance;").Scan(&cnt)
+	if err != nil {
+		_, err = db.conn.Exec(context.Background(), "CREATE TABLE market.balance (login VARCHAR(256) PRIMARY KEY,"+
+			" balance decimal, withdrawn decimal);")
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+	err = db.conn.QueryRow(context.Background(), "SELECT COUNT(*) FROM market.withdrawals;").Scan(&cnt)
+	if err != nil {
+		_, err = db.conn.Exec(context.Background(), "CREATE TABLE market.withdrawals (login VARCHAR(256), "+
+			" orderID VARCHAR(256) PRIMARY KEY, sum decimal, processedDateTime timestamp);")
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -97,11 +128,11 @@ func (db *DatabaseInstance) Register(login string, password string) error {
 	return nil
 }
 
-func (db *DatabaseInstance) InsertAuth(login string, userId string) error {
+func (db *DatabaseInstance) InsertAuth(login string, userID string) error {
 	ctx := context.Background()
 
 	_, err := db.conn.Exec(ctx, "INSERT INTO market.authentication (login, cookie) VALUES ($1, $2)"+
-		"ON CONFLICT (login) DO UPDATE SET cookie = excluded.cookie;", login, userId)
+		"ON CONFLICT (login) DO UPDATE SET cookie = excluded.cookie;", login, userID)
 	if err != nil {
 		return err
 	}
@@ -122,13 +153,59 @@ func (db *DatabaseInstance) CheckLogin(login string, password string) error {
 	return nil
 }
 
-func (db *DatabaseInstance) GetAuth(userId string) (login string, err error) {
+func (db *DatabaseInstance) GetAuth(userID string) (login string, err error) {
 	ctx := context.Background()
-	var logins []string
-	err = db.conn.QueryRow(ctx, "SELECT login FROM market.authentication where login = $1;",
-		login).Scan(&logins)
-	if err != nil {
+	var loginRes string
+	err = db.conn.QueryRow(ctx, "SELECT login FROM market.authentication where cookie = $1;",
+		userID).Scan(&loginRes)
+	if err != nil && errors.Is(err, sql.ErrNoRows) {
 		return "", err
 	}
-	return logins[0], nil
+	return loginRes, nil
+}
+
+func (db *DatabaseInstance) InsertOrder(orderID string, status string, accrual float32, login string) error {
+	ctx := context.Background()
+
+	_, err := db.conn.Exec(ctx, "INSERT INTO market.orders (orderID, status , accrual, login , uploadDateTime) "+
+		"VALUES ($1, $2, $3, $4, $5) ON CONFLICT (orderID) DO UPDATE SET status = excluded.status, "+
+		"accrual = excluded.accrual;",
+		orderID, status, accrual, login, time.Now())
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (db *DatabaseInstance) GetLoginByOrderID(orderID string) (string, error) {
+	ctx := context.Background()
+	var login string
+
+	err := db.conn.QueryRow(ctx, "SELECT login FROM market.orders where orderID = $1;",
+		orderID).Scan(&login)
+
+	if err != nil && errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
+	if len(login) != 0 {
+		return login, nil
+	}
+	return "", nil
+}
+
+func (db *DatabaseInstance) RecountBalanceForLogin(login string) error {
+	ctx := context.Background()
+	var sum float32
+	err := db.conn.QueryRow(ctx, "SELECT sum(accrual) FROM market.orders where login = $1;",
+		login).Scan(&sum)
+	if err != nil {
+		return err
+	}
+	_, err = db.conn.Exec(ctx, "INSERT INTO market.balance (login, balance, withdrawn) "+
+		"VALUES ($1, $2, 0) ON CONFLICT (login) DO UPDATE SET balance = excluded.balance;",
+		login, sum)
+	if err != nil {
+		return err
+	}
+	return nil
 }

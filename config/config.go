@@ -50,5 +50,9 @@ func NewConfig() Env {
 		envs.DSNString = "user=postgres password=admin host=localhost port=5432 dbname=postgres sslmode=disable"
 	}
 
+	if len(envs.AccrualSystemAddress) == 0 {
+		envs.AccrualSystemAddress = "http://localhost:8082"
+	}
+
 	return envs
 }

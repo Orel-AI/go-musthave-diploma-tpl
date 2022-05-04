@@ -18,7 +18,8 @@ func main() {
 		log.Fatal(err)
 	}
 	service := market.NewMarketService(store)
-	marketHandler := handler.NewMarketHandler(service, envs.BaseURL, envs.SecretString, envs.CookieName)
+	marketHandler := handler.NewMarketHandler(service, envs.BaseURL, envs.SecretString,
+		envs.CookieName, envs.AccrualSystemAddress)
 	r := chi.NewRouter()
 	r.Use(marketHandler.AuthMiddleware)
 	r.Use(handler.GzipMiddleware)
@@ -26,6 +27,7 @@ func main() {
 
 	r.Post("/api/user/register", marketHandler.RegisterPOST)
 	r.Post("/api/user/login", marketHandler.LoginPOST)
+	r.Post("/api/user/orders", marketHandler.OrdersPOST)
 
 	err = http.ListenAndServe(envs.AddressToServe, r)
 	if err != nil {

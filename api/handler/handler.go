@@ -20,10 +20,11 @@ import (
 )
 
 type MarketHandler struct {
-	Market       *market.MarketService
-	baseURL      string
-	secretString string
-	cookieName   string
+	Market               *market.MarketService
+	baseURL              string
+	secretString         string
+	cookieName           string
+	accrualSystemAddress string
 }
 
 type gzipWriter struct {
@@ -137,19 +138,29 @@ func (h *MarketHandler) generateCookie() (*http.Cookie, uint64, error) {
 		nil
 }
 
-func NewMarketHandler(s *market.MarketService, b string, secretString string, cookieName string) *MarketHandler {
-	return &MarketHandler{s, b, secretString, cookieName}
+func NewMarketHandler(s *market.MarketService, b string, secretString string, cookieName string,
+	accrualSystemAddress string) *MarketHandler {
+	return &MarketHandler{s, b, secretString,
+		cookieName, accrualSystemAddress}
+}
+
+func MakeUserID(ctx context.Context) (userID string, ok bool) {
+	userID64, ok := ctx.Value(keyPrincipalID).(uint64)
+	if !ok {
+		return "", false
+	}
+	userID = strconv.FormatUint(userID64, 10)
+	return userID, true
 }
 
 func (h *MarketHandler) RegisterPOST(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	userID, ok := ctx.Value(keyPrincipalID).(uint64)
+	userIDStr, ok := MakeUserID(ctx)
 	if !ok {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	userIDStr := strconv.FormatUint(userID, 10)
 
 	body, err := io.ReadAll(r.Body)
 	defer r.Body.Close()
@@ -197,12 +208,11 @@ func (h *MarketHandler) RegisterPOST(w http.ResponseWriter, r *http.Request) {
 func (h *MarketHandler) LoginPOST(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	userID, ok := ctx.Value(keyPrincipalID).(uint64)
+	userIDStr, ok := MakeUserID(ctx)
 	if !ok {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	userIDStr := strconv.FormatUint(userID, 10)
 
 	body, err := io.ReadAll(r.Body)
 	defer r.Body.Close()
@@ -250,12 +260,11 @@ func (h *MarketHandler) LoginPOST(w http.ResponseWriter, r *http.Request) {
 func (h *MarketHandler) OrdersPOST(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	userID, ok := ctx.Value(keyPrincipalID).(uint64)
+	userIDStr, ok := MakeUserID(ctx)
 	if !ok {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	userIDStr := strconv.FormatUint(userID, 10)
 
 	body, err := io.ReadAll(r.Body)
 	defer r.Body.Close()
@@ -277,4 +286,27 @@ func (h *MarketHandler) OrdersPOST(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+
+	err = h.Market.UploadOrderInfo(string(body), "NEW", 0, login, true)
+
+	if errors.Is(err, market.ErrOrderIDIsInvalid) {
+		http.Error(w, "orderID is invalid", http.StatusUnprocessableEntity)
+		return
+	} else if errors.Is(err, market.ErrAnotherLogin) {
+		http.Error(w, "orderID uploaded by another user", http.StatusConflict)
+		return
+	} else if errors.Is(err, market.ErrOrderExists) {
+		w.WriteHeader(http.StatusOK)
+		return
+	} else if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	go func() {
+		h.Market.GetActualizedOrderInfo(h.accrualSystemAddress, string(body), login)
+	}()
+
+	w.WriteHeader(http.StatusAccepted)
+	return
 }
