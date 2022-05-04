@@ -13,6 +13,7 @@ import (
 	"github.com/Orel-AI/go-musthave-diploma-tpl.git/service/market"
 	"github.com/Orel-AI/go-musthave-diploma-tpl.git/storage"
 	"github.com/google/uuid"
+	"github.com/theplant/luhn"
 	"io"
 	"log"
 	"net/http"
@@ -34,9 +35,14 @@ type gzipWriter struct {
 	Writer io.Writer
 }
 
-type RequestBody struct {
+type RequestAuthBody struct {
 	Login    string `json:"login"`
 	Password string `json:"password"`
+}
+
+type RequestWithdrawBody struct {
+	OrderID string  `json:"order"`
+	Sum     float32 `json:"sum"`
 }
 
 type key int
@@ -148,7 +154,7 @@ func (h *MarketHandler) generateCookie() (*http.Cookie, uint64, error) {
 
 func (h *MarketHandler) generateAuthCookie(w http.ResponseWriter, login string) error {
 	authToken := uuid.NewString()
-	expiresAt := time.Now().Add(30 * time.Second)
+	expiresAt := time.Now().Add(300 * time.Second)
 
 	err := h.Market.Authenticate(login, authToken, context.Background())
 	if err != nil {
@@ -181,7 +187,7 @@ func (h *MarketHandler) checkAuthCookie(w http.ResponseWriter, r *http.Request) 
 		Name:    AuthCookieName,
 		Value:   cookie.Value,
 		Path:    "/",
-		Expires: time.Now().Add(30 * time.Second)})
+		Expires: time.Now().Add(300 * time.Second)})
 
 	return login, nil
 }
@@ -222,7 +228,7 @@ func (h *MarketHandler) RegisterPOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reqBody := RequestBody{}
+	reqBody := RequestAuthBody{}
 
 	err = json.Unmarshal(body, &reqBody)
 	if err != nil {
@@ -269,7 +275,7 @@ func (h *MarketHandler) LoginPOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reqBody := RequestBody{}
+	reqBody := RequestAuthBody{}
 
 	err = json.Unmarshal(body, &reqBody)
 	if err != nil {
@@ -420,4 +426,53 @@ func (h *MarketHandler) BalanceGET(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+}
+
+func (h *MarketHandler) WithdrawPost(w http.ResponseWriter, r *http.Request) {
+	login, err := h.checkAuthCookie(w, r)
+	if login == "" && errors.Is(err, ErrNoAuth) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	defer r.Body.Close()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if r.Header.Get("Content-Type") != "application/json" {
+		http.Error(w, "Content-Type header is not valid", http.StatusBadRequest)
+		return
+	}
+
+	reqBody := RequestWithdrawBody{}
+
+	err = json.Unmarshal(body, &reqBody)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	orderIDInt, err := strconv.Atoi(reqBody.OrderID)
+	if !(luhn.Valid(orderIDInt)) {
+		http.Error(w, market.ErrOrderIDIsInvalid.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+
+	err = h.Market.WithdrawBonuses(login, reqBody.OrderID, reqBody.Sum)
+	if errors.Is(err, market.ErrNotEnoughBonuses) {
+		http.Error(w, err.Error(), http.StatusPaymentRequired)
+		return
+	} else if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+
 }

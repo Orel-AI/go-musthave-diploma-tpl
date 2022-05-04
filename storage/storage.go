@@ -21,6 +21,7 @@ type Storage interface {
 	RecountBalanceForLogin(login string) error
 	GetAllOrdersOfUser(login string) ([]OrderInfo, error)
 	GetBalanceByLogin(login string) (BalanceInfo, error)
+	AddWithdrawRecord(login string, orderID string, sum float32) error
 }
 
 type DatabaseInstance struct {
@@ -100,7 +101,7 @@ func (db *DatabaseInstance) initStorage() {
 	}
 	err = db.conn.QueryRow(context.Background(), "SELECT COUNT(*) FROM market.orders;").Scan(&cnt)
 	if err != nil {
-		_, err = db.conn.Exec(context.Background(), "CREATE TABLE market.orders (orderid VARCHAR(256) PRIMARY KEY,"+
+		_, err = db.conn.Exec(context.Background(), "CREATE TABLE market.orders (orderID VARCHAR(256) PRIMARY KEY,"+
 			" status VARCHAR(256), accrual decimal, login VARCHAR(256), uploadDateTime TIMESTAMP WITH TIME ZONE );")
 		if err != nil {
 			log.Fatal(err)
@@ -117,7 +118,8 @@ func (db *DatabaseInstance) initStorage() {
 	err = db.conn.QueryRow(context.Background(), "SELECT COUNT(*) FROM market.withdrawals;").Scan(&cnt)
 	if err != nil {
 		_, err = db.conn.Exec(context.Background(), "CREATE TABLE market.withdrawals (login VARCHAR(256), "+
-			" orderID VARCHAR(256) PRIMARY KEY, sum decimal, processedDateTime timestamp);")
+			" orderID VARCHAR(256) PRIMARY KEY, sum decimal, "+
+			"processedDateTime TIMESTAMP WITH TIME ZONE);")
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -210,24 +212,36 @@ func (db *DatabaseInstance) GetLoginByOrderID(orderID string) (string, error) {
 func (db *DatabaseInstance) RecountBalanceForLogin(login string) error {
 	ctx := context.Background()
 	var sum float32
+	var withdrawSum float32 = 0
 	err := db.conn.QueryRow(ctx, "SELECT sum(accrual) FROM market.orders where login = $1;",
 		login).Scan(&sum)
+
 	if err != nil {
 		return err
 	}
+	err = db.conn.QueryRow(ctx, "SELECT sum(sum) FROM market.withdrawals where login = $1);",
+		login).Scan(&withdrawSum)
+	if err != nil {
+		return err
+	}
+
+	sum = sum - withdrawSum
+
 	_, err = db.conn.Exec(ctx, "INSERT INTO market.balance (login, balance, withdrawn) "+
-		"VALUES ($1, $2, 0) ON CONFLICT (login) DO UPDATE SET balance = excluded.balance;",
-		login, sum)
+		"VALUES ($1, $2, $3) ON CONFLICT (login) DO UPDATE SET balance = excluded.balance,"+
+		"  withdrawn = excluded.withdrawn;",
+		login, sum, withdrawSum)
 	if err != nil {
 		return err
 	}
+
 	return nil
 }
 
 func (db *DatabaseInstance) GetAllOrdersOfUser(login string) ([]OrderInfo, error) {
 	ctx := context.Background()
 	var results []OrderInfo
-	rows, err := db.conn.Query(ctx, "SELECT orderid, status, accrual, uploaddatetime "+
+	rows, err := db.conn.Query(ctx, "SELECT orderID, status, accrual, uploadDateTime "+
 		"FROM market.orders WHERE login = $1", login)
 	if err != nil {
 		return nil, err
@@ -270,4 +284,16 @@ func (db *DatabaseInstance) GetBalanceByLogin(login string) (BalanceInfo, error)
 	}
 	return result, nil
 
+}
+
+func (db *DatabaseInstance) AddWithdrawRecord(login string, orderID string, sum float32) error {
+	ctx := context.Background()
+	_, err := db.conn.Exec(ctx, "INSERT INTO market.withdrawals (login, orderID, sum , processedDateTime) "+
+		"VALUES ($1, $2, $3, $4) ON CONFLICT (orderID) DO UPDATE SET sum = excluded.sum, "+
+		"processedDateTime = excluded.processedDateTime;",
+		login, orderID, sum, time.Now())
+	if err != nil {
+		return err
+	}
+	return nil
 }

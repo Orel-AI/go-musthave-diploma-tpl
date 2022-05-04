@@ -27,6 +27,7 @@ var (
 	ErrOrderIDIsInvalid = errors.New("orderID is invalid")
 	ErrOrderExists      = errors.New("orderID is already in DB")
 	ErrAnotherLogin     = errors.New("orderID is already in DB, but uploaded by another user")
+	ErrNotEnoughBonuses = errors.New("not enough bonuses")
 )
 
 func NewMarketService(storage storage.Storage) *MarketService {
@@ -146,4 +147,27 @@ func (s *MarketService) GetUserBalance(login string) (storage.BalanceInfo, error
 	}
 
 	return result, nil
+}
+
+func (s *MarketService) WithdrawBonuses(login string, orderID string, sum float32) error {
+	res, err := s.Storage.GetBalanceByLogin(login)
+	if err != nil {
+		return err
+	}
+
+	if res.Current < sum {
+		return ErrNotEnoughBonuses
+	}
+
+	err = s.Storage.AddWithdrawRecord(login, orderID, sum)
+	if err != nil {
+		return err
+	}
+
+	err = s.Storage.RecountBalanceForLogin(login)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
