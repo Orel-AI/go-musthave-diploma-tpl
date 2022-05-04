@@ -28,6 +28,7 @@ func main() {
 	r.Post("/api/user/register", marketHandler.RegisterPOST)
 	r.Post("/api/user/login", marketHandler.LoginPOST)
 	r.Post("/api/user/orders", marketHandler.OrdersPOST)
+	r.Get("/api/user/orders", marketHandler.OrdersGET)
 
 	err = http.ListenAndServe(envs.AddressToServe, r)
 	if err != nil {

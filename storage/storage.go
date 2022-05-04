@@ -19,12 +19,20 @@ type Storage interface {
 	InsertOrder(orderID string, status string, accrual float32, login string) error
 	GetLoginByOrderID(orderID string) (string, error)
 	RecountBalanceForLogin(login string) error
+	GetAllOrdersOfUser(login string) ([]OrderInfo, error)
 }
 
 type DatabaseInstance struct {
 	conn       *pgxpool.Pool
 	connConfig string
 	db         *sql.DB
+}
+
+type OrderInfo struct {
+	Number     string
+	Status     string
+	Accrual    float32
+	UploadedAt string
 }
 
 var (
@@ -208,4 +216,34 @@ func (db *DatabaseInstance) RecountBalanceForLogin(login string) error {
 		return err
 	}
 	return nil
+}
+
+func (db *DatabaseInstance) GetAllOrdersOfUser(login string) ([]OrderInfo, error) {
+	ctx := context.Background()
+	var results []OrderInfo
+	rows, err := db.conn.Query(ctx, "SELECT orderid, status, accrual, uploaddatetime "+
+		"FROM market.orders WHERE login = $1", login)
+	if err != nil {
+		return nil, err
+	}
+	i := 0
+	for rows.Next() {
+		var timeFromRow time.Time
+		var accrual float32
+		var number string
+		var status string
+		err := rows.Scan(&number, &status, &accrual, &timeFromRow)
+		if err != nil {
+			continue
+		}
+		results = append(results, OrderInfo{Number: number, Status: status})
+		if accrual != 0 {
+			results[i].Accrual = accrual
+		}
+		results[i].UploadedAt = timeFromRow.Format(time.RFC3339)
+
+		i++
+	}
+	return results, nil
+
 }

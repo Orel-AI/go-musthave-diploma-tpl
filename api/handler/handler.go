@@ -282,6 +282,10 @@ func (h *MarketHandler) OrdersPOST(w http.ResponseWriter, r *http.Request) {
 	}
 
 	login, err := h.Market.CheckAuth(userIDStr, ctx)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	if login == "" {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
@@ -308,5 +312,46 @@ func (h *MarketHandler) OrdersPOST(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	w.WriteHeader(http.StatusAccepted)
-	return
+}
+
+func (h *MarketHandler) OrdersGET(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	userIDStr, ok := MakeUserID(ctx)
+	if !ok {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	login, err := h.Market.CheckAuth(userIDStr, ctx)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if login == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	result, err := h.Market.GetUserOrders(login)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if result == nil {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	resJSON, err := json.Marshal(result)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, err = w.Write([]byte(resJSON))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 }

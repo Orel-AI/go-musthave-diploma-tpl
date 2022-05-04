@@ -103,6 +103,10 @@ func (s *MarketService) GetActualizedOrderInfo(url string, orderID string, login
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Println("[GetActualizedOrderInfo] " + err.Error())
+		return
+	}
 	responseBody := ResponseBodyOrder{}
 	err = json.Unmarshal(body, &responseBody)
 	if err != nil {
@@ -121,4 +125,13 @@ func (s *MarketService) GetActualizedOrderInfo(url string, orderID string, login
 		log.Println("[GetActualizedOrderInfo] " + err.Error())
 		return
 	}
+}
+
+func (s *MarketService) GetUserOrders(login string) ([]storage.OrderInfo, error) {
+
+	result, err := s.Storage.GetAllOrdersOfUser(login)
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
 }
