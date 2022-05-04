@@ -33,7 +33,7 @@ func NewMarketService(storage storage.Storage) *MarketService {
 	return &MarketService{storage}
 }
 
-func (s *MarketService) Register(login string, password string, userCookie string, ctx context.Context) error {
+func (s *MarketService) Register(login string, password string, ctx context.Context) error {
 	err := s.Storage.Register(login, password)
 	if err != nil {
 		return err

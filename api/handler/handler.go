@@ -12,11 +12,13 @@ import (
 	"errors"
 	"github.com/Orel-AI/go-musthave-diploma-tpl.git/service/market"
 	"github.com/Orel-AI/go-musthave-diploma-tpl.git/storage"
+	"github.com/google/uuid"
 	"io"
 	"log"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type MarketHandler struct {
@@ -40,7 +42,13 @@ type RequestBody struct {
 type key int
 
 const (
-	keyPrincipalID key = iota
+	keyPrincipalID key    = iota
+	AuthCookieName string = "Authentication"
+)
+
+var (
+	ErrAuthIsExpired = errors.New("authentication is expired")
+	ErrNoAuth        = errors.New("no auth cookie")
 )
 
 func (w gzipWriter) Write(b []byte) (int, error) {
@@ -138,6 +146,46 @@ func (h *MarketHandler) generateCookie() (*http.Cookie, uint64, error) {
 		nil
 }
 
+func (h *MarketHandler) generateAuthCookie(w http.ResponseWriter, login string) error {
+	authToken := uuid.NewString()
+	expiresAt := time.Now().Add(30 * time.Second)
+
+	err := h.Market.Authenticate(login, authToken, context.Background())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return err
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:    AuthCookieName,
+		Value:   authToken,
+		Path:    "/",
+		Expires: expiresAt})
+	return nil
+}
+
+func (h *MarketHandler) checkAuthCookie(w http.ResponseWriter, r *http.Request) (string, error) {
+	cookie, err := r.Cookie(AuthCookieName)
+	if err != nil {
+		return "", ErrNoAuth
+	}
+	if cookie.Expires.After(time.Now()) {
+		return "", ErrAuthIsExpired
+	}
+
+	login, err := h.Market.CheckAuth(cookie.Value, context.Background())
+	if err != nil {
+		return "", err
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:    AuthCookieName,
+		Value:   cookie.Value,
+		Path:    "/",
+		Expires: time.Now().Add(30 * time.Second)})
+
+	return login, nil
+}
+
 func NewMarketHandler(s *market.MarketService, b string, secretString string, cookieName string,
 	accrualSystemAddress string) *MarketHandler {
 	return &MarketHandler{s, b, secretString,
@@ -156,7 +204,7 @@ func MakeUserID(ctx context.Context) (userID string, ok bool) {
 func (h *MarketHandler) RegisterPOST(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	userIDStr, ok := MakeUserID(ctx)
+	_, ok := MakeUserID(ctx)
 	if !ok {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -187,37 +235,28 @@ func (h *MarketHandler) RegisterPOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = h.Market.Register(reqBody.Login, reqBody.Password, userIDStr, ctx)
+	err = h.Market.Register(reqBody.Login, reqBody.Password, ctx)
 	if errors.Is(err, storage.ErrLoginIsTaken) {
 		http.Error(w, "login is taken", http.StatusConflict)
-		log.Println("[RegisterPOST] - status", w.Header().Get("Status"))
 		return
 	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
-		log.Println("[RegisterPOST] - status", w.Header().Get("Status"))
 		return
 	}
 
-	err = h.Market.Authenticate(reqBody.Login, userIDStr, ctx)
+	err = h.generateAuthCookie(w, reqBody.Login)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
-		log.Println("[RegisterPOST] - status", w.Header().Get("Status"))
 		return
 	}
 
 	w.WriteHeader(http.StatusOK)
-	log.Println("[RegisterPOST] - status end", w.Header().Get("Status"))
+	log.Println("[RegisterPOST] - end")
 }
 
 func (h *MarketHandler) LoginPOST(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-
-	userIDStr, ok := MakeUserID(ctx)
-	if !ok {
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
 
 	body, err := io.ReadAll(r.Body)
 	defer r.Body.Close()
@@ -253,7 +292,7 @@ func (h *MarketHandler) LoginPOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = h.Market.Authenticate(reqBody.Login, userIDStr, ctx)
+	err = h.generateAuthCookie(w, reqBody.Login)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -263,13 +302,6 @@ func (h *MarketHandler) LoginPOST(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *MarketHandler) OrdersPOST(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
-	userIDStr, ok := MakeUserID(ctx)
-	if !ok {
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
 
 	body, err := io.ReadAll(r.Body)
 	defer r.Body.Close()
@@ -286,13 +318,13 @@ func (h *MarketHandler) OrdersPOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	login, err := h.Market.CheckAuth(userIDStr, ctx)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	login, err := h.checkAuthCookie(w, r)
+	if login == "" && errors.Is(err, ErrNoAuth) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	if login == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -320,21 +352,14 @@ func (h *MarketHandler) OrdersPOST(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *MarketHandler) OrdersGET(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 
-	userIDStr, ok := MakeUserID(ctx)
-	if !ok {
-		w.WriteHeader(http.StatusInternalServerError)
+	login, err := h.checkAuthCookie(w, r)
+	if login == "" && errors.Is(err, ErrNoAuth) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-
-	login, err := h.Market.CheckAuth(userIDStr, ctx)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if login == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
@@ -362,21 +387,14 @@ func (h *MarketHandler) OrdersGET(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *MarketHandler) BalanceGET(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 
-	userIDStr, ok := MakeUserID(ctx)
-	if !ok {
-		w.WriteHeader(http.StatusInternalServerError)
+	login, err := h.checkAuthCookie(w, r)
+	if login == "" && errors.Is(err, ErrNoAuth) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-
-	login, err := h.Market.CheckAuth(userIDStr, ctx)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if login == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
