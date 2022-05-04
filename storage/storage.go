@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4/pgxpool"
 	"log"
+	"strings"
 	"time"
 )
 
@@ -215,13 +216,14 @@ func (db *DatabaseInstance) RecountBalanceForLogin(login string) error {
 	var withdrawSum float32 = 0
 	err := db.conn.QueryRow(ctx, "SELECT sum(accrual) FROM market.orders where login = $1;",
 		login).Scan(&sum)
-
-	if err != nil {
+	if err != nil && !strings.Contains(err.Error(), "can't scan into dest") {
 		return err
 	}
+
 	err = db.conn.QueryRow(ctx, "SELECT sum(sum) FROM market.withdrawals where login = $1;",
 		login).Scan(&withdrawSum)
-	if err != nil {
+	if err != nil && !strings.Contains(err.Error(), "can't scan into dest") {
+		log.Println()
 		return err
 	}
 
